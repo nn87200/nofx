@@ -310,6 +310,22 @@ func (e *DebateEngine) buildMarketContext(session *store.DebateSessionWithDetail
 		klineCount = 50
 	}
 
+	var structureOpts *market.StructureOpts
+	if config.Indicators.EnableStructure {
+		structureOpts = &market.StructureOpts{
+			Enabled:   true,
+			Depth:     config.Indicators.StructureDepth,
+			Lookback:  config.Indicators.StructureLookback,
+			MaxEvents: config.Indicators.StructureMaxEvents,
+		}
+		if structureOpts.Lookback <= 0 {
+			structureOpts.Lookback = 500
+		}
+		if structureOpts.MaxEvents <= 0 {
+			structureOpts.MaxEvents = 15
+		}
+	}
+
 	// Fetch market data for each candidate
 	marketDataMap := make(map[string]*market.Data)
 	for _, coin := range candidates {
@@ -317,6 +333,9 @@ func (e *DebateEngine) buildMarketContext(session *store.DebateSessionWithDetail
 		if err != nil {
 			logger.Warnf("Failed to get market data for %s: %v", coin.Symbol, err)
 			continue
+		}
+		if structureOpts != nil && structureOpts.Enabled {
+			market.EnrichWithStructure(data, *structureOpts)
 		}
 		marketDataMap[coin.Symbol] = data
 	}

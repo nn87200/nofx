@@ -535,6 +535,7 @@ export interface IndicatorConfig {
   enable_rsi: boolean;
   enable_atr: boolean;
   enable_boll: boolean;
+  enable_structure?: boolean;
   enable_volume: boolean;
   enable_oi: boolean;
   enable_funding_rate: boolean;
@@ -542,6 +543,9 @@ export interface IndicatorConfig {
   rsi_periods?: number[];
   atr_periods?: number[];
   boll_periods?: number[];
+  structure_depth?: number;
+  structure_lookback?: number;
+  structure_max_events?: number;
   external_data_sources?: ExternalDataSource[];
 
   // ========== NofxOS 数据源统一配置 ==========

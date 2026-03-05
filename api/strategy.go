@@ -481,6 +481,22 @@ func (s *Server) handleStrategyTestRun(c *gin.Context) {
 
 	fmt.Printf("📊 Using timeframes: %v, primary: %s, kline count: %d\n", timeframes, primaryTimeframe, klineCount)
 
+	var structureOpts *market.StructureOpts
+	if req.Config.Indicators.EnableStructure {
+		structureOpts = &market.StructureOpts{
+			Enabled:   true,
+			Depth:     req.Config.Indicators.StructureDepth,
+			Lookback:  req.Config.Indicators.StructureLookback,
+			MaxEvents: req.Config.Indicators.StructureMaxEvents,
+		}
+		if structureOpts.Lookback <= 0 {
+			structureOpts.Lookback = 500
+		}
+		if structureOpts.MaxEvents <= 0 {
+			structureOpts.MaxEvents = 15
+		}
+	}
+
 	// Get real market data (using multiple timeframes)
 	marketDataMap := make(map[string]*market.Data)
 	for _, coin := range candidates {
@@ -489,6 +505,9 @@ func (s *Server) handleStrategyTestRun(c *gin.Context) {
 			// If getting data for a coin fails, log but continue
 			fmt.Printf("⚠️  Failed to get market data for %s: %v\n", coin.Symbol, err)
 			continue
+		}
+		if structureOpts != nil && structureOpts.Enabled {
+			market.EnrichWithStructure(data, *structureOpts)
 		}
 		marketDataMap[coin.Symbol] = data
 	}

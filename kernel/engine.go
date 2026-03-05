@@ -358,6 +358,22 @@ func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 		klineCount = 30
 	}
 
+	var structureOpts *market.StructureOpts
+	if config.Indicators.EnableStructure {
+		structureOpts = &market.StructureOpts{
+			Enabled:   true,
+			Depth:     config.Indicators.StructureDepth,
+			Lookback:  config.Indicators.StructureLookback,
+			MaxEvents: config.Indicators.StructureMaxEvents,
+		}
+		if structureOpts.Lookback <= 0 {
+			structureOpts.Lookback = 500
+		}
+		if structureOpts.MaxEvents <= 0 {
+			structureOpts.MaxEvents = 15
+		}
+	}
+
 	logger.Infof("📊 Strategy timeframes: %v, Primary: %s, Kline count: %d", timeframes, primaryTimeframe, klineCount)
 
 	// 1. First fetch data for position coins (must fetch)
@@ -366,6 +382,9 @@ func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 		if err != nil {
 			logger.Infof("⚠️  Failed to fetch market data for position %s: %v", pos.Symbol, err)
 			continue
+		}
+		if structureOpts != nil && structureOpts.Enabled {
+			market.EnrichWithStructure(data, *structureOpts)
 		}
 		ctx.MarketDataMap[pos.Symbol] = data
 	}
@@ -387,6 +406,9 @@ func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 		if err != nil {
 			logger.Infof("⚠️  Failed to fetch market data for %s: %v", coin.Symbol, err)
 			continue
+		}
+		if structureOpts != nil && structureOpts.Enabled {
+			market.EnrichWithStructure(data, *structureOpts)
 		}
 
 		// Liquidity filter (skip for xyz dex assets - they don't have OI data from Binance)
@@ -1212,6 +1234,10 @@ func (e *StrategyEngine) writeAvailableIndicators(sb *strings.Builder) {
 		sb.WriteString("\n")
 	}
 
+	if indicators.EnableStructure {
+		sb.WriteString("- Structure (MSB, BOS, ChoCH, Sweeps)\n")
+	}
+
 	if indicators.EnableVolume {
 		sb.WriteString("- Volume data\n")
 	}
@@ -1676,6 +1702,14 @@ func (e *StrategyEngine) formatTimeframeSeriesData(sb *strings.Builder, data *ma
 		sb.WriteString(fmt.Sprintf("BOLL Lower: %s\n", formatFloatSlice(data.BOLLLower)))
 	}
 
+	if indicators.EnableStructure && data.Structure != nil {
+		s := data.Structure
+		sb.WriteString("Structure (MSB, BOS, ChoCH, Sweeps):\n")
+		formatStructureLayer(sb, "Short-term", s.ShortTerm)
+		formatStructureLayer(sb, "Intermediate-term", s.IntermediateTerm)
+		formatStructureLayer(sb, "Long-term", s.LongTerm)
+	}
+
 	sb.WriteString("\n")
 }
 
@@ -1781,6 +1815,37 @@ func formatFlowValue(v float64) string {
 		return fmt.Sprintf("%s%.2fK", sign, v/1e3)
 	}
 	return fmt.Sprintf("%s%.2f", sign, v)
+}
+
+func formatStructureLayer(sb *strings.Builder, label string, layer *market.StructureLayer) {
+	if layer == nil {
+		return
+	}
+	sb.WriteString(fmt.Sprintf("  %s:\n", label))
+	if len(layer.SwingHighs) > 0 {
+		vals := make([]string, len(layer.SwingHighs))
+		for i, v := range layer.SwingHighs {
+			vals[i] = fmt.Sprintf("%.4f", v)
+		}
+		sb.WriteString(fmt.Sprintf("    Swing highs: %s\n", strings.Join(vals, ", ")))
+	}
+	if len(layer.SwingLows) > 0 {
+		vals := make([]string, len(layer.SwingLows))
+		for i, v := range layer.SwingLows {
+			vals[i] = fmt.Sprintf("%.4f", v)
+		}
+		sb.WriteString(fmt.Sprintf("    Swing lows: %s\n", strings.Join(vals, ", ")))
+	}
+	if len(layer.Events) > 0 {
+		parts := make([]string, 0, len(layer.Events))
+		for _, ev := range layer.Events {
+			parts = append(parts, fmt.Sprintf("%s @ %.4f (%d bars ago)", ev.Type, ev.Level, ev.BarsAgo))
+		}
+		sb.WriteString(fmt.Sprintf("    Events: %s\n", strings.Join(parts, ", ")))
+	}
+	if layer.LastTrend != "" {
+		sb.WriteString(fmt.Sprintf("    Last trend: %s\n", layer.LastTrend))
+	}
 }
 
 func formatFloatSlice(values []float64) string {

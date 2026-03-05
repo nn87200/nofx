@@ -45,6 +45,49 @@ type TimeframeSeriesData struct {
 	BOLLUpper  []float64 `json:"boll_upper"`  // Upper band
 	BOLLMiddle []float64 `json:"boll_middle"` // Middle band (SMA)
 	BOLLLower  []float64 `json:"boll_lower"`  // Lower band
+	// Structure (MSB, BOS, ChoCH, Sweeps)
+	Structure *StructureData `json:"structure,omitempty"`
+}
+
+// StructureOpts options for Structure indicator calculation
+type StructureOpts struct {
+	Enabled   bool
+	Depth     int // 1 = short, 2 = intermediate, 3 = long term
+	Lookback  int // bars to fetch for structure (e.g. 500)
+	MaxEvents int // max events to keep (e.g. 15)
+}
+
+// SwingLevel is a pivot high or low level (invalidated when broken by close)
+type SwingLevel struct {
+	Price       float64
+	BarIndex    int
+	Time        int64
+	Invalidated bool
+}
+
+// StructureEvent is a single MSB/BOS/ChoCH/Sweep event
+// Type: sweep_bull, sweep_bear, bos_bull, bos_bear, choch_bull, choch_bear
+type StructureEvent struct {
+	Type     string
+	Level    float64
+	BarIndex int
+	BarsAgo  int
+}
+
+// StructureLayer is structure (swing levels + events) at one timeframe horizon (short, intermediate, or long term).
+type StructureLayer struct {
+	SwingHighs []float64       // active (not invalidated) swing high levels, newest first
+	SwingLows  []float64       // active swing low levels
+	Events     []StructureEvent // last N events
+	LastTrend  string           // "bullish" | "bearish" | ""
+}
+
+// StructureData per-timeframe structure data (LuxAlgo-style: short-term pivots, then intermediate from those, then long-term from intermediate).
+// ShortTerm is always populated when Structure is enabled; IntermediateTerm when Depth >= 2; LongTerm when Depth >= 3.
+type StructureData struct {
+	ShortTerm       *StructureLayer // depth 1: pivots on raw OHLC (1 bar left/right)
+	IntermediateTerm *StructureLayer // depth 2: pivots of short-term pivots
+	LongTerm        *StructureLayer  // depth 3: pivots of intermediate-term pivots
 }
 
 // OIData Open Interest data

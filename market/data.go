@@ -934,17 +934,24 @@ func CalculateStructure(klines []Kline, opts StructureOpts) *StructureData {
 	if maxEvents <= 0 {
 		maxEvents = 15
 	}
+	depth := opts.Depth
+	if depth <= 0 {
+		depth = 1
+	}
+	if depth > 3 {
+		depth = 3
+	}
 
 	shortHighs, shortLows := detectPivots(klines, 1, 1)
 	shortLayer := buildStructureLayer(klines, shortHighs, shortLows, lookback, maxEvents)
 	out := &StructureData{ShortTerm: shortLayer}
 
 	var intHighs, intLows []SwingLevel
-	if opts.Depth >= 2 {
+	if depth >= 2 {
 		intHighs, intLows = detectPivotsFromLevels(shortHighs, shortLows, 1, 1)
 		out.IntermediateTerm = buildStructureLayer(klines, intHighs, intLows, lookback, maxEvents)
 	}
-	if opts.Depth >= 3 && len(intHighs)+len(intLows) > 0 {
+	if depth >= 3 && len(intHighs)+len(intLows) > 0 {
 		longHighs, longLows := detectPivotsFromLevels(intHighs, intLows, 1, 1)
 		if len(longHighs) > 0 || len(longLows) > 0 {
 			out.LongTerm = buildStructureLayer(klines, longHighs, longLows, lookback, maxEvents)

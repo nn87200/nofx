@@ -864,6 +864,33 @@ func TestCalculateStructure_Depth2(t *testing.T) {
 	}
 }
 
+// TestCalculateStructure_DepthZeroDefault verifies that Depth 0 (e.g. omitted in API) is treated as 1.
+func TestCalculateStructure_DepthZeroDefault(t *testing.T) {
+	klines := []Kline{
+		{OpenTime: 0, High: 100, Low: 99, Close: 99.5},
+		{OpenTime: 1, High: 101, Low: 99, Close: 100},
+		{OpenTime: 2, High: 105, Low: 101, Close: 103},
+		{OpenTime: 3, High: 103, Low: 102, Close: 102.5},
+		{OpenTime: 4, High: 104, Low: 102, Close: 103},
+		{OpenTime: 5, High: 106, Low: 103, Close: 106},
+	}
+	opts := StructureOpts{Enabled: true, Depth: 0, Lookback: 100, MaxEvents: 10}
+	data := CalculateStructure(klines, opts)
+	if data == nil {
+		t.Fatal("CalculateStructure returned nil with Depth 0")
+	}
+	if data.ShortTerm == nil {
+		t.Fatal("ShortTerm layer should be set when Depth is 0 (normalized to 1)")
+	}
+	// Depth 0 normalized to 1: only short-term; no intermediate/long
+	if data.IntermediateTerm != nil {
+		t.Error("Depth 0 should be treated as 1; IntermediateTerm should be nil")
+	}
+	if data.LongTerm != nil {
+		t.Error("Depth 0 should be treated as 1; LongTerm should be nil")
+	}
+}
+
 // TestCalculateStructure_DefaultLookbackMaxEvents verifies zero lookback/maxEvents use defaults.
 func TestCalculateStructure_DefaultLookbackMaxEvents(t *testing.T) {
 	klines := []Kline{

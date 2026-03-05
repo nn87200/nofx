@@ -378,10 +378,13 @@ func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 
 	// 1. First fetch data for position coins (must fetch)
 	for _, pos := range ctx.Positions {
-		data, err := market.GetWithTimeframes(pos.Symbol, timeframes, primaryTimeframe, klineCount, structureOpts)
+		data, err := market.GetWithTimeframes(pos.Symbol, timeframes, primaryTimeframe, klineCount)
 		if err != nil {
 			logger.Infof("⚠️  Failed to fetch market data for position %s: %v", pos.Symbol, err)
 			continue
+		}
+		if structureOpts != nil && structureOpts.Enabled {
+			market.EnrichWithStructure(data, *structureOpts)
 		}
 		ctx.MarketDataMap[pos.Symbol] = data
 	}
@@ -399,10 +402,13 @@ func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 			continue
 		}
 
-		data, err := market.GetWithTimeframes(coin.Symbol, timeframes, primaryTimeframe, klineCount, structureOpts)
+		data, err := market.GetWithTimeframes(coin.Symbol, timeframes, primaryTimeframe, klineCount)
 		if err != nil {
 			logger.Infof("⚠️  Failed to fetch market data for %s: %v", coin.Symbol, err)
 			continue
+		}
+		if structureOpts != nil && structureOpts.Enabled {
+			market.EnrichWithStructure(data, *structureOpts)
 		}
 
 		// Liquidity filter (skip for xyz dex assets - they don't have OI data from Binance)

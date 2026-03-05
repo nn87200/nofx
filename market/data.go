@@ -165,6 +165,27 @@ func getKlinesFromHyperliquid(symbol, interval string, limit int) ([]Kline, erro
 	return klines, nil
 }
 
+// getKlinesForTimeframe fetches kline data for one symbol/timeframe/limit (Hyperliquid or Binance via CoinAnk).
+func getKlinesForTimeframe(symbol, tf string, limit int) ([]Kline, error) {
+	symbol = Normalize(symbol)
+	if IsXyzDexAsset(symbol) {
+		return getKlinesFromHyperliquid(symbol, tf, limit)
+	}
+	return getKlinesFromCoinAnk(symbol, tf, "binance", limit)
+}
+
+// getKlinesForStructure fetches klines for the structure indicator only. It always uses CoinAnk (never the
+// native Hyperliquid API) so structure is computed from higher-liquidity data. For xyz dex assets we use
+// CoinAnk's Hyperliquid feed; for crypto we use Binance. See TODO.md for selecting the most liquid exchange per symbol.
+func getKlinesForStructure(symbol, tf string, limit int) ([]Kline, error) {
+	symbol = Normalize(symbol)
+	exchange := "binance"
+	if IsXyzDexAsset(symbol) {
+		exchange = "hyperliquid" // CoinAnk feed, not native HL API
+	}
+	return getKlinesFromCoinAnk(symbol, tf, exchange, limit)
+}
+
 // Get retrieves market data for the specified token (uses Binance data by default)
 func Get(symbol string) (*Data, error) {
 	return GetWithExchange(symbol, "binance")
@@ -282,8 +303,8 @@ func GetWithExchange(symbol, exchange string) (*Data, error) {
 }
 
 // GetWithTimeframes retrieves market data for specified multiple timeframes.
-// structureOpts is optional; when enabled, more klines are fetched (StructureLookback) for structure calculation.
-func GetWithTimeframes(symbol string, timeframes []string, primaryTimeframe string, count int, structureOpts *StructureOpts) (*Data, error) {
+// count is the number of K-lines per timeframe; at least 200 are fetched from the API.
+func GetWithTimeframes(symbol string, timeframes []string, primaryTimeframe string, count int) (*Data, error) {
 	symbol = Normalize(symbol)
 
 	if len(timeframes) == 0 {
@@ -311,40 +332,17 @@ func GetWithTimeframes(symbol string, timeframes []string, primaryTimeframe stri
 	timeframeData := make(map[string]*TimeframeSeriesData)
 	var primaryKlines []Kline
 
-	// Fetch limit: when Structure is enabled use StructureLookback (e.g. 500); when disabled, keep original behavior (min 200)
-	var fetchLimit int
-	if structureOpts != nil && structureOpts.Enabled && structureOpts.Lookback > 0 {
-		fetchLimit = structureOpts.Lookback
-		if count > fetchLimit {
-			fetchLimit = count
-		}
-	} else {
-		fetchLimit = count
-		if fetchLimit < 200 {
-			fetchLimit = 200
-		}
+	fetchLimit := count
+	if fetchLimit < 200 {
+		fetchLimit = 200
 	}
-
-	// Check if this is an xyz dex asset (use Hyperliquid API)
-	isXyzAsset := IsXyzDexAsset(symbol)
 
 	// Get K-line data for each timeframe
 	for _, tf := range timeframes {
-		var klines []Kline
-		var err error
-
-		if isXyzAsset {
-			klines, err = getKlinesFromHyperliquid(symbol, tf, fetchLimit)
-			if err != nil {
-				logger.Infof("⚠️ Failed to get %s %s K-line from Hyperliquid: %v", symbol, tf, err)
-				continue
-			}
-		} else {
-			klines, err = getKlinesFromCoinAnk(symbol, tf, "binance", fetchLimit)
-			if err != nil {
-				logger.Infof("⚠️ Failed to get %s %s K-line from CoinAnk: %v", symbol, tf, err)
-				continue
-			}
+		klines, err := getKlinesForTimeframe(symbol, tf, fetchLimit)
+		if err != nil {
+			logger.Infof("⚠️ Failed to get %s %s K-line: %v", symbol, tf, err)
+			continue
 		}
 
 		if len(klines) == 0 {
@@ -357,11 +355,8 @@ func GetWithTimeframes(symbol string, timeframes []string, primaryTimeframe stri
 			primaryKlines = klines
 		}
 
-		// Calculate series data for this timeframe (use count from config; last count bars only)
+		// Calculate series data for this timeframe (last count bars only)
 		seriesData := calculateTimeframeSeries(klines, tf, count)
-		if structureOpts != nil && structureOpts.Enabled {
-			seriesData.Structure = CalculateStructure(klines, *structureOpts)
-		}
 		timeframeData[tf] = seriesData
 	}
 
@@ -407,6 +402,39 @@ func GetWithTimeframes(symbol string, timeframes []string, primaryTimeframe stri
 		FundingRate:   fundingRate,
 		TimeframeData: timeframeData,
 	}, nil
+}
+
+// EnrichWithStructure does a separate kline fetch per timeframe (structureOpts.Lookback bars),
+// computes Structure and attaches it to data.TimeframeData[tf].Structure. Call after GetWithTimeframes
+// when the structure indicator is enabled; keeps the main fetch count unchanged.
+func EnrichWithStructure(data *Data, structureOpts StructureOpts) {
+	if data == nil || !structureOpts.Enabled {
+		return
+	}
+	opts := structureOpts
+	if opts.Lookback <= 0 {
+		opts.Lookback = 500
+	}
+	if opts.MaxEvents <= 0 {
+		opts.MaxEvents = 15
+	}
+	if opts.Depth <= 0 {
+		opts.Depth = 1
+	}
+	if opts.Depth > 3 {
+		opts.Depth = 3
+	}
+	symbol := Normalize(data.Symbol)
+	for tf, series := range data.TimeframeData {
+		if series == nil {
+			continue
+		}
+		klines, err := getKlinesForStructure(symbol, tf, opts.Lookback)
+		if err != nil || len(klines) < 3 {
+			continue
+		}
+		series.Structure = CalculateStructure(klines, opts)
+	}
 }
 
 // calculateTimeframeSeries calculates series data for a single timeframe

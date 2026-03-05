@@ -311,14 +311,17 @@ func GetWithTimeframes(symbol string, timeframes []string, primaryTimeframe stri
 	timeframeData := make(map[string]*TimeframeSeriesData)
 	var primaryKlines []Kline
 
-	// Fetch limit: when Structure is enabled, fetch at least StructureLookback bars
-	fetchLimit := count
-	if fetchLimit < 200 {
-		fetchLimit = 200
-	}
+	// Fetch limit: when Structure is enabled use StructureLookback (e.g. 500); when disabled, keep original behavior (min 200)
+	var fetchLimit int
 	if structureOpts != nil && structureOpts.Enabled && structureOpts.Lookback > 0 {
-		if structureOpts.Lookback > fetchLimit {
-			fetchLimit = structureOpts.Lookback
+		fetchLimit = structureOpts.Lookback
+		if count > fetchLimit {
+			fetchLimit = count
+		}
+	} else {
+		fetchLimit = count
+		if fetchLimit < 200 {
+			fetchLimit = 200
 		}
 	}
 
@@ -761,29 +764,56 @@ func detectPivots(klines []Kline, leftBars, rightBars int) (highs, lows []SwingL
 	return highs, lows
 }
 
-// CalculateStructure computes StructureData (MSB, BOS, ChoCH, Sweeps) from klines.
-func CalculateStructure(klines []Kline, opts StructureOpts) *StructureData {
-	if len(klines) < 3 || !opts.Enabled {
-		return nil
+// detectPivotsFromLevels finds "pivots of pivots" (LuxAlgo intermediate/long-term): given lists of swing levels
+// ordered by BarIndex, returns levels that are local max (highs) or local min (lows) in the sequence.
+func detectPivotsFromLevels(highs, lows []SwingLevel, leftBars, rightBars int) (highsOut, lowsOut []SwingLevel) {
+	// Local max in highs by Price
+	for i := leftBars; i < len(highs)-rightBars; i++ {
+		isHigh := true
+		for j := 1; j <= leftBars; j++ {
+			if highs[i].Price < highs[i-j].Price {
+				isHigh = false
+				break
+			}
+		}
+		if isHigh {
+			for j := 1; j <= rightBars; j++ {
+				if highs[i].Price < highs[i+j].Price {
+					isHigh = false
+					break
+				}
+			}
+		}
+		if isHigh {
+			highsOut = append(highsOut, highs[i])
+		}
 	}
-	lookback := opts.Lookback
-	if lookback <= 0 {
-		lookback = 500
+	// Local min in lows by Price
+	for i := leftBars; i < len(lows)-rightBars; i++ {
+		isLow := true
+		for j := 1; j <= leftBars; j++ {
+			if lows[i].Price > lows[i-j].Price {
+				isLow = false
+				break
+			}
+		}
+		if isLow {
+			for j := 1; j <= rightBars; j++ {
+				if lows[i].Price > lows[i+j].Price {
+					isLow = false
+					break
+				}
+			}
+		}
+		if isLow {
+			lowsOut = append(lowsOut, lows[i])
+		}
 	}
-	maxEvents := opts.MaxEvents
-	if maxEvents <= 0 {
-		maxEvents = 15
-	}
-	leftBars, rightBars := 1, 1
-	if opts.Depth >= 2 {
-		leftBars, rightBars = 2, 2
-	}
-	if opts.Depth >= 3 {
-		leftBars, rightBars = 3, 3
-	}
+	return highsOut, lowsOut
+}
 
-	highs, lows := detectPivots(klines, leftBars, rightBars)
-	// Index pivots by bar index so we can "activate" them when we reach that bar
+// buildStructureLayer runs bar-by-bar break/sweep logic for the given pivot levels and returns a single StructureLayer.
+func buildStructureLayer(klines []Kline, highs, lows []SwingLevel, lookback, maxEvents int) *StructureLayer {
 	highByBar := make(map[int]float64)
 	lowByBar := make(map[int]float64)
 	for _, h := range highs {
@@ -792,7 +822,6 @@ func CalculateStructure(klines []Kline, opts StructureOpts) *StructureData {
 	for _, l := range lows {
 		lowByBar[l.BarIndex] = l.Price
 	}
-
 	type levelState struct {
 		price    float64
 		barIndex int
@@ -804,19 +833,16 @@ func CalculateStructure(klines []Kline, opts StructureOpts) *StructureData {
 	n := len(klines)
 
 	for i := 0; i < n; i++ {
-		// Activate pivots that formed at this bar (pivot bar index == i)
 		if p, ok := highByBar[i]; ok {
 			activeHighs = append(activeHighs, levelState{p, i, false})
 		}
 		if p, ok := lowByBar[i]; ok {
 			activeLows = append(activeLows, levelState{p, i, false})
 		}
-
 		c := klines[i].Close
 		hi := klines[i].High
 		lo := klines[i].Low
 
-		// Breaks: close beyond level -> invalidate, emit BOS/ChoCH (only levels that formed before this bar are active)
 		for j := range activeHighs {
 			if activeHighs[j].invalid || activeHighs[j].barIndex >= i {
 				continue
@@ -847,8 +873,6 @@ func CalculateStructure(klines []Kline, opts StructureOpts) *StructureData {
 				events = append(events, StructureEvent{Type: eventType, Level: lvl, BarIndex: i, BarsAgo: n - 1 - i})
 			}
 		}
-
-		// Sweeps: wick through level, close back inside (only levels that formed before this bar)
 		for j := range activeHighs {
 			if activeHighs[j].invalid || activeHighs[j].barIndex >= i {
 				continue
@@ -875,7 +899,6 @@ func CalculateStructure(klines []Kline, opts StructureOpts) *StructureData {
 	for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
 		events[i], events[j] = events[j], events[i]
 	}
-
 	var swingHighs, swingLows []float64
 	for j := len(activeHighs) - 1; j >= 0; j-- {
 		if !activeHighs[j].invalid && (n-1-activeHighs[j].barIndex) <= lookback {
@@ -887,13 +910,47 @@ func CalculateStructure(klines []Kline, opts StructureOpts) *StructureData {
 			swingLows = append(swingLows, activeLows[j].price)
 		}
 	}
-
-	return &StructureData{
+	return &StructureLayer{
 		SwingHighs: swingHighs,
 		SwingLows:  swingLows,
 		Events:     events,
 		LastTrend:  lastTrend,
 	}
+}
+
+// CalculateStructure computes StructureData (MSB, BOS, ChoCH, Sweeps) from klines.
+// Uses LuxAlgo-style hierarchy: short-term pivots on OHLC (1 bar left/right), then intermediate = pivots of
+// short-term pivots, then long-term = pivots of intermediate. ShortTerm is always set; IntermediateTerm
+// when Depth >= 2; LongTerm when Depth >= 3.
+func CalculateStructure(klines []Kline, opts StructureOpts) *StructureData {
+	if len(klines) < 3 || !opts.Enabled {
+		return nil
+	}
+	lookback := opts.Lookback
+	if lookback <= 0 {
+		lookback = 500
+	}
+	maxEvents := opts.MaxEvents
+	if maxEvents <= 0 {
+		maxEvents = 15
+	}
+
+	shortHighs, shortLows := detectPivots(klines, 1, 1)
+	shortLayer := buildStructureLayer(klines, shortHighs, shortLows, lookback, maxEvents)
+	out := &StructureData{ShortTerm: shortLayer}
+
+	var intHighs, intLows []SwingLevel
+	if opts.Depth >= 2 {
+		intHighs, intLows = detectPivotsFromLevels(shortHighs, shortLows, 1, 1)
+		out.IntermediateTerm = buildStructureLayer(klines, intHighs, intLows, lookback, maxEvents)
+	}
+	if opts.Depth >= 3 && len(intHighs)+len(intLows) > 0 {
+		longHighs, longLows := detectPivotsFromLevels(intHighs, intLows, 1, 1)
+		if len(longHighs) > 0 || len(longLows) > 0 {
+			out.LongTerm = buildStructureLayer(klines, longHighs, longLows, lookback, maxEvents)
+		}
+	}
+	return out
 }
 
 // calculateIntradaySeries calculates intraday series data

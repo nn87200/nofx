@@ -68,18 +68,26 @@ type SwingLevel struct {
 // StructureEvent is a single MSB/BOS/ChoCH/Sweep event
 // Type: sweep_bull, sweep_bear, bos_bull, bos_bear, choch_bull, choch_bear
 type StructureEvent struct {
-	Type    string
-	Level   float64
+	Type     string
+	Level    float64
 	BarIndex int
 	BarsAgo  int
 }
 
-// StructureData per-timeframe structure data (swing levels + recent events)
+// StructureLayer is structure (swing levels + events) at one timeframe horizon (short, intermediate, or long term).
+type StructureLayer struct {
+	SwingHighs []float64       // active (not invalidated) swing high levels, newest first
+	SwingLows  []float64       // active swing low levels
+	Events     []StructureEvent // last N events
+	LastTrend  string           // "bullish" | "bearish" | ""
+}
+
+// StructureData per-timeframe structure data (LuxAlgo-style: short-term pivots, then intermediate from those, then long-term from intermediate).
+// ShortTerm is always populated when Structure is enabled; IntermediateTerm when Depth >= 2; LongTerm when Depth >= 3.
 type StructureData struct {
-	SwingHighs []float64        // active (not invalidated) swing high levels, newest first
-	SwingLows  []float64        // active swing low levels
-	Events    []StructureEvent  // last N events
-	LastTrend string            // "bullish" | "bearish" | ""
+	ShortTerm       *StructureLayer // depth 1: pivots on raw OHLC (1 bar left/right)
+	IntermediateTerm *StructureLayer // depth 2: pivots of short-term pivots
+	LongTerm        *StructureLayer  // depth 3: pivots of intermediate-term pivots
 }
 
 // OIData Open Interest data

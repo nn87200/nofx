@@ -1699,30 +1699,9 @@ func (e *StrategyEngine) formatTimeframeSeriesData(sb *strings.Builder, data *ma
 	if indicators.EnableStructure && data.Structure != nil {
 		s := data.Structure
 		sb.WriteString("Structure (MSB, BOS, ChoCH, Sweeps):\n")
-		if len(s.SwingHighs) > 0 {
-			vals := make([]string, len(s.SwingHighs))
-			for i, v := range s.SwingHighs {
-				vals[i] = fmt.Sprintf("%.4f", v)
-			}
-			sb.WriteString(fmt.Sprintf("  Swing highs: %s\n", strings.Join(vals, ", ")))
-		}
-		if len(s.SwingLows) > 0 {
-			vals := make([]string, len(s.SwingLows))
-			for i, v := range s.SwingLows {
-				vals[i] = fmt.Sprintf("%.4f", v)
-			}
-			sb.WriteString(fmt.Sprintf("  Swing lows: %s\n", strings.Join(vals, ", ")))
-		}
-		if len(s.Events) > 0 {
-			parts := make([]string, 0, len(s.Events))
-			for _, ev := range s.Events {
-				parts = append(parts, fmt.Sprintf("%s @ %.4f (%d bars ago)", ev.Type, ev.Level, ev.BarsAgo))
-			}
-			sb.WriteString(fmt.Sprintf("  Events: %s\n", strings.Join(parts, ", ")))
-		}
-		if s.LastTrend != "" {
-			sb.WriteString(fmt.Sprintf("  Last trend: %s\n", s.LastTrend))
-		}
+		formatStructureLayer(sb, "Short-term", s.ShortTerm)
+		formatStructureLayer(sb, "Intermediate-term", s.IntermediateTerm)
+		formatStructureLayer(sb, "Long-term", s.LongTerm)
 	}
 
 	sb.WriteString("\n")
@@ -1830,6 +1809,37 @@ func formatFlowValue(v float64) string {
 		return fmt.Sprintf("%s%.2fK", sign, v/1e3)
 	}
 	return fmt.Sprintf("%s%.2f", sign, v)
+}
+
+func formatStructureLayer(sb *strings.Builder, label string, layer *market.StructureLayer) {
+	if layer == nil {
+		return
+	}
+	sb.WriteString(fmt.Sprintf("  %s:\n", label))
+	if len(layer.SwingHighs) > 0 {
+		vals := make([]string, len(layer.SwingHighs))
+		for i, v := range layer.SwingHighs {
+			vals[i] = fmt.Sprintf("%.4f", v)
+		}
+		sb.WriteString(fmt.Sprintf("    Swing highs: %s\n", strings.Join(vals, ", ")))
+	}
+	if len(layer.SwingLows) > 0 {
+		vals := make([]string, len(layer.SwingLows))
+		for i, v := range layer.SwingLows {
+			vals[i] = fmt.Sprintf("%.4f", v)
+		}
+		sb.WriteString(fmt.Sprintf("    Swing lows: %s\n", strings.Join(vals, ", ")))
+	}
+	if len(layer.Events) > 0 {
+		parts := make([]string, 0, len(layer.Events))
+		for _, ev := range layer.Events {
+			parts = append(parts, fmt.Sprintf("%s @ %.4f (%d bars ago)", ev.Type, ev.Level, ev.BarsAgo))
+		}
+		sb.WriteString(fmt.Sprintf("    Events: %s\n", strings.Join(parts, ", ")))
+	}
+	if layer.LastTrend != "" {
+		sb.WriteString(fmt.Sprintf("    Last trend: %s\n", layer.LastTrend))
+	}
 }
 
 func formatFloatSlice(values []float64) string {

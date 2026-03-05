@@ -174,16 +174,15 @@ func getKlinesForTimeframe(symbol, tf string, limit int) ([]Kline, error) {
 	return getKlinesFromCoinAnk(symbol, tf, "binance", limit)
 }
 
-// getKlinesForStructure fetches klines for the structure indicator only. It always uses CoinAnk (never the
-// native Hyperliquid API) so structure is computed from higher-liquidity data. For xyz dex assets we use
-// CoinAnk's Hyperliquid feed; for crypto we use Binance. See TODO.md for selecting the most liquid exchange per symbol.
+// getKlinesForStructure fetches klines for the structure indicator only. For xyz dex assets we use the
+// native Hyperliquid API (CoinAnk's Hyperliquid feed often returns success=false on the open API). For
+// crypto we use CoinAnk Binance. See TODO.md for selecting the most liquid exchange per symbol.
 func getKlinesForStructure(symbol, tf string, limit int) ([]Kline, error) {
 	symbol = Normalize(symbol)
-	exchange := "binance"
 	if IsXyzDexAsset(symbol) {
-		exchange = "hyperliquid" // CoinAnk feed, not native HL API
+		return getKlinesFromHyperliquid(symbol, tf, limit)
 	}
-	return getKlinesFromCoinAnk(symbol, tf, exchange, limit)
+	return getKlinesFromCoinAnk(symbol, tf, "binance", limit)
 }
 
 // Get retrieves market data for the specified token (uses Binance data by default)

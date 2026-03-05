@@ -972,3 +972,37 @@ func TestDetectPivotsFromLevels(t *testing.T) {
 		t.Errorf("intermediate low: want 95 @ 5, got %.2f @ %d", intLows[0].Price, intLows[0].BarIndex)
 	}
 }
+
+// TestNormalize_XyzSymbols verifies xyz symbols normalize correctly so structure uses native HL (not CoinAnk).
+func TestNormalize_XyzSymbols(t *testing.T) {
+	tests := []struct {
+		symbol string
+		want   string
+		xyz    bool
+	}{
+		{"xyz:AMD", "xyz:AMD", true},
+		{"XYZ:AMD", "xyz:AMD", true},
+		{"xyz:TSLA", "xyz:TSLA", true},
+		{"BTCUSDT", "BTCUSDT", false},
+		{"ETHUSDT", "ETHUSDT", false},
+	}
+	for _, tt := range tests {
+		got := Normalize(tt.symbol)
+		if got != tt.want {
+			t.Errorf("Normalize(%q) = %q, want %q", tt.symbol, got, tt.want)
+		}
+		if IsXyzDexAsset(got) != tt.xyz {
+			t.Errorf("IsXyzDexAsset(Normalize(%q)) = %v, want %v", tt.symbol, IsXyzDexAsset(got), tt.xyz)
+		}
+	}
+}
+
+// TestEnrichWithStructure_NoPanic verifies EnrichWithStructure does not panic with nil or disabled opts.
+func TestEnrichWithStructure_NoPanic(t *testing.T) {
+	// nil data
+	EnrichWithStructure(nil, StructureOpts{Enabled: true, Lookback: 500})
+	// disabled structure
+	EnrichWithStructure(&Data{Symbol: "BTCUSDT", TimeframeData: map[string]*TimeframeSeriesData{}}, StructureOpts{Enabled: false})
+	// enabled but empty timeframe data
+	EnrichWithStructure(&Data{Symbol: "BTCUSDT", TimeframeData: map[string]*TimeframeSeriesData{}}, StructureOpts{Enabled: true, Lookback: 500})
+}

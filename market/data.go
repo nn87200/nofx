@@ -281,11 +281,9 @@ func GetWithExchange(symbol, exchange string) (*Data, error) {
 	}, nil
 }
 
-// GetWithTimeframes retrieves market data for specified multiple timeframes
-// timeframes: list of timeframes, e.g. ["5m", "15m", "1h", "4h"]
-// primaryTimeframe: primary timeframe (used for calculating current indicators), defaults to timeframes[0]
-// count: number of K-lines for each timeframe
-func GetWithTimeframes(symbol string, timeframes []string, primaryTimeframe string, count int) (*Data, error) {
+// GetWithTimeframes retrieves market data for specified multiple timeframes.
+// structureOpts is optional; when enabled, more klines are fetched (StructureLookback) for structure calculation.
+func GetWithTimeframes(symbol string, timeframes []string, primaryTimeframe string, count int, structureOpts *StructureOpts) (*Data, error) {
 	symbol = Normalize(symbol)
 
 	if len(timeframes) == 0 {
@@ -313,6 +311,17 @@ func GetWithTimeframes(symbol string, timeframes []string, primaryTimeframe stri
 	timeframeData := make(map[string]*TimeframeSeriesData)
 	var primaryKlines []Kline
 
+	// Fetch limit: when Structure is enabled, fetch at least StructureLookback bars
+	fetchLimit := count
+	if fetchLimit < 200 {
+		fetchLimit = 200
+	}
+	if structureOpts != nil && structureOpts.Enabled && structureOpts.Lookback > 0 {
+		if structureOpts.Lookback > fetchLimit {
+			fetchLimit = structureOpts.Lookback
+		}
+	}
+
 	// Check if this is an xyz dex asset (use Hyperliquid API)
 	isXyzAsset := IsXyzDexAsset(symbol)
 
@@ -322,15 +331,13 @@ func GetWithTimeframes(symbol string, timeframes []string, primaryTimeframe stri
 		var err error
 
 		if isXyzAsset {
-			// Use Hyperliquid API for xyz dex assets
-			klines, err = getKlinesFromHyperliquid(symbol, tf, 200)
+			klines, err = getKlinesFromHyperliquid(symbol, tf, fetchLimit)
 			if err != nil {
 				logger.Infof("⚠️ Failed to get %s %s K-line from Hyperliquid: %v", symbol, tf, err)
 				continue
 			}
 		} else {
-			// Use CoinAnk for regular crypto assets (default to Binance)
-			klines, err = getKlinesFromCoinAnk(symbol, tf, "binance", 200)
+			klines, err = getKlinesFromCoinAnk(symbol, tf, "binance", fetchLimit)
 			if err != nil {
 				logger.Infof("⚠️ Failed to get %s %s K-line from CoinAnk: %v", symbol, tf, err)
 				continue
@@ -347,8 +354,11 @@ func GetWithTimeframes(symbol string, timeframes []string, primaryTimeframe stri
 			primaryKlines = klines
 		}
 
-		// Calculate series data for this timeframe (use count from config)
+		// Calculate series data for this timeframe (use count from config; last count bars only)
 		seriesData := calculateTimeframeSeries(klines, tf, count)
+		if structureOpts != nil && structureOpts.Enabled {
+			seriesData.Structure = CalculateStructure(klines, *structureOpts)
+		}
 		timeframeData[tf] = seriesData
 	}
 
@@ -690,6 +700,200 @@ func calculateBOLL(klines []Kline, period int, multiplier float64) (upper, middl
 	lower = sma - multiplier*stdDev
 
 	return upper, middle, lower
+}
+
+// detectPivots finds swing highs and swing lows (depth 1: leftBars=1, rightBars=1).
+func detectPivots(klines []Kline, leftBars, rightBars int) (highs, lows []SwingLevel) {
+	n := len(klines)
+	if n < leftBars+rightBars+1 {
+		return nil, nil
+	}
+	for i := leftBars; i < n-rightBars; i++ {
+		// Swing high: local max
+		isHigh := true
+		for j := 1; j <= leftBars; j++ {
+			if klines[i].High < klines[i-j].High {
+				isHigh = false
+				break
+			}
+		}
+		if isHigh {
+			for j := 1; j <= rightBars; j++ {
+				if klines[i].High < klines[i+j].High {
+					isHigh = false
+					break
+				}
+			}
+		}
+		if isHigh {
+			highs = append(highs, SwingLevel{
+				Price:       klines[i].High,
+				BarIndex:    i,
+				Time:        klines[i].OpenTime,
+				Invalidated: false,
+			})
+		}
+		// Swing low: local min
+		isLow := true
+		for j := 1; j <= leftBars; j++ {
+			if klines[i].Low > klines[i-j].Low {
+				isLow = false
+				break
+			}
+		}
+		if isLow {
+			for j := 1; j <= rightBars; j++ {
+				if klines[i].Low > klines[i+j].Low {
+					isLow = false
+					break
+				}
+			}
+		}
+		if isLow {
+			lows = append(lows, SwingLevel{
+				Price:       klines[i].Low,
+				BarIndex:    i,
+				Time:        klines[i].OpenTime,
+				Invalidated: false,
+			})
+		}
+	}
+	return highs, lows
+}
+
+// CalculateStructure computes StructureData (MSB, BOS, ChoCH, Sweeps) from klines.
+func CalculateStructure(klines []Kline, opts StructureOpts) *StructureData {
+	if len(klines) < 3 || !opts.Enabled {
+		return nil
+	}
+	lookback := opts.Lookback
+	if lookback <= 0 {
+		lookback = 500
+	}
+	maxEvents := opts.MaxEvents
+	if maxEvents <= 0 {
+		maxEvents = 15
+	}
+	leftBars, rightBars := 1, 1
+	if opts.Depth >= 2 {
+		leftBars, rightBars = 2, 2
+	}
+	if opts.Depth >= 3 {
+		leftBars, rightBars = 3, 3
+	}
+
+	highs, lows := detectPivots(klines, leftBars, rightBars)
+	// Index pivots by bar index so we can "activate" them when we reach that bar
+	highByBar := make(map[int]float64)
+	lowByBar := make(map[int]float64)
+	for _, h := range highs {
+		highByBar[h.BarIndex] = h.Price
+	}
+	for _, l := range lows {
+		lowByBar[l.BarIndex] = l.Price
+	}
+
+	type levelState struct {
+		price    float64
+		barIndex int
+		invalid  bool
+	}
+	var activeHighs, activeLows []levelState
+	var events []StructureEvent
+	lastTrend := ""
+	n := len(klines)
+
+	for i := 0; i < n; i++ {
+		// Activate pivots that formed at this bar (pivot bar index == i)
+		if p, ok := highByBar[i]; ok {
+			activeHighs = append(activeHighs, levelState{p, i, false})
+		}
+		if p, ok := lowByBar[i]; ok {
+			activeLows = append(activeLows, levelState{p, i, false})
+		}
+
+		c := klines[i].Close
+		hi := klines[i].High
+		lo := klines[i].Low
+
+		// Breaks: close beyond level -> invalidate, emit BOS/ChoCH (only levels that formed before this bar are active)
+		for j := range activeHighs {
+			if activeHighs[j].invalid || activeHighs[j].barIndex >= i {
+				continue
+			}
+			lvl := activeHighs[j].price
+			if c > lvl {
+				activeHighs[j].invalid = true
+				eventType := "bos_bull"
+				if lastTrend == "bearish" {
+					eventType = "choch_bull"
+				}
+				lastTrend = "bullish"
+				events = append(events, StructureEvent{Type: eventType, Level: lvl, BarIndex: i, BarsAgo: n - 1 - i})
+			}
+		}
+		for j := range activeLows {
+			if activeLows[j].invalid || activeLows[j].barIndex >= i {
+				continue
+			}
+			lvl := activeLows[j].price
+			if c < lvl {
+				activeLows[j].invalid = true
+				eventType := "bos_bear"
+				if lastTrend == "bullish" {
+					eventType = "choch_bear"
+				}
+				lastTrend = "bearish"
+				events = append(events, StructureEvent{Type: eventType, Level: lvl, BarIndex: i, BarsAgo: n - 1 - i})
+			}
+		}
+
+		// Sweeps: wick through level, close back inside (only levels that formed before this bar)
+		for j := range activeHighs {
+			if activeHighs[j].invalid || activeHighs[j].barIndex >= i {
+				continue
+			}
+			lvl := activeHighs[j].price
+			if hi > lvl && c < lvl {
+				events = append(events, StructureEvent{Type: "sweep_bear", Level: lvl, BarIndex: i, BarsAgo: n - 1 - i})
+			}
+		}
+		for j := range activeLows {
+			if activeLows[j].invalid || activeLows[j].barIndex >= i {
+				continue
+			}
+			lvl := activeLows[j].price
+			if lo < lvl && c > lvl {
+				events = append(events, StructureEvent{Type: "sweep_bull", Level: lvl, BarIndex: i, BarsAgo: n - 1 - i})
+			}
+		}
+	}
+
+	if len(events) > maxEvents {
+		events = events[len(events)-maxEvents:]
+	}
+	for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
+		events[i], events[j] = events[j], events[i]
+	}
+
+	var swingHighs, swingLows []float64
+	for j := len(activeHighs) - 1; j >= 0; j-- {
+		if !activeHighs[j].invalid && (n-1-activeHighs[j].barIndex) <= lookback {
+			swingHighs = append(swingHighs, activeHighs[j].price)
+		}
+	}
+	for j := len(activeLows) - 1; j >= 0; j-- {
+		if !activeLows[j].invalid && (n-1-activeLows[j].barIndex) <= lookback {
+			swingLows = append(swingLows, activeLows[j].price)
+		}
+	}
+
+	return &StructureData{
+		SwingHighs: swingHighs,
+		SwingLows:  swingLows,
+		Events:     events,
+		LastTrend:  lastTrend,
+	}
 }
 
 // calculateIntradaySeries calculates intraday series data

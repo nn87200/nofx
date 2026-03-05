@@ -45,6 +45,41 @@ type TimeframeSeriesData struct {
 	BOLLUpper  []float64 `json:"boll_upper"`  // Upper band
 	BOLLMiddle []float64 `json:"boll_middle"` // Middle band (SMA)
 	BOLLLower  []float64 `json:"boll_lower"`  // Lower band
+	// Structure (MSB, BOS, ChoCH, Sweeps)
+	Structure *StructureData `json:"structure,omitempty"`
+}
+
+// StructureOpts options for Structure indicator calculation
+type StructureOpts struct {
+	Enabled   bool
+	Depth     int // 1 = short, 2 = intermediate, 3 = long term
+	Lookback  int // bars to fetch for structure (e.g. 500)
+	MaxEvents int // max events to keep (e.g. 15)
+}
+
+// SwingLevel is a pivot high or low level (invalidated when broken by close)
+type SwingLevel struct {
+	Price       float64
+	BarIndex    int
+	Time        int64
+	Invalidated bool
+}
+
+// StructureEvent is a single MSB/BOS/ChoCH/Sweep event
+// Type: sweep_bull, sweep_bear, bos_bull, bos_bear, choch_bull, choch_bear
+type StructureEvent struct {
+	Type    string
+	Level   float64
+	BarIndex int
+	BarsAgo  int
+}
+
+// StructureData per-timeframe structure data (swing levels + recent events)
+type StructureData struct {
+	SwingHighs []float64        // active (not invalidated) swing high levels, newest first
+	SwingLows  []float64        // active swing low levels
+	Events    []StructureEvent  // last N events
+	LastTrend string            // "bullish" | "bearish" | ""
 }
 
 // OIData Open Interest data

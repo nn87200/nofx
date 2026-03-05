@@ -583,3 +583,284 @@ func TestCalculateBoxData(t *testing.T) {
 		t.Errorf("Expected CurrentPrice = 100.0, got %v", box.CurrentPrice)
 	}
 }
+
+// TestDetectPivots tests swing high/low detection (depth 1: left=1, right=1).
+func TestDetectPivots(t *testing.T) {
+	// Series: bar 1 has local max high (100) and local min low (98)
+	klines := []Kline{
+		{High: 99, Low: 99, Close: 98},
+		{High: 100, Low: 98, Close: 99}, // swing high 100, swing low 98 at bar 1
+		{High: 99, Low: 99, Close: 98},
+	}
+	highs, lows := detectPivots(klines, 1, 1)
+	if len(highs) != 1 {
+		t.Fatalf("expected 1 swing high, got %d", len(highs))
+	}
+	if highs[0].Price != 100 || highs[0].BarIndex != 1 {
+		t.Errorf("swing high: want Price=100 BarIndex=1, got Price=%.2f BarIndex=%d", highs[0].Price, highs[0].BarIndex)
+	}
+	if len(lows) != 1 {
+		t.Fatalf("expected 1 swing low, got %d", len(lows))
+	}
+	if lows[0].Price != 98 || lows[0].BarIndex != 1 {
+		t.Errorf("swing low: want Price=98 BarIndex=1, got Price=%.2f BarIndex=%d", lows[0].Price, lows[0].BarIndex)
+	}
+}
+
+// TestCalculateStructure tests Structure calculation: sweep and break events.
+func TestCalculateStructure(t *testing.T) {
+	// Build klines: swing high at bar 2 = 105. Bar 4 sweeps it (high 106, close 104). Bar 5 breaks (close 106).
+	klines := []Kline{
+		{OpenTime: 0, High: 100, Low: 99, Close: 99.5},
+		{OpenTime: 1, High: 102, Low: 99, Close: 101},
+		{OpenTime: 2, High: 105, Low: 101, Close: 103}, // swing high 105 at bar 2
+		{OpenTime: 3, High: 104, Low: 102, Close: 103},
+		{OpenTime: 4, High: 106, Low: 103, Close: 104}, // sweep: high > 105, close < 105
+		{OpenTime: 5, High: 107, Low: 104, Close: 106}, // break: close > 105
+	}
+	opts := StructureOpts{Enabled: true, Depth: 1, Lookback: 100, MaxEvents: 20}
+	data := CalculateStructure(klines, opts)
+	if data == nil {
+		t.Fatal("CalculateStructure returned nil")
+	}
+	// Should have at least one sweep_bear and one break (bos_bull or choch_bull)
+	var hasSweepBear, hasBreak bool
+	for _, ev := range data.Events {
+		if ev.Type == "sweep_bear" {
+			hasSweepBear = true
+		}
+		if ev.Type == "bos_bull" || ev.Type == "choch_bull" {
+			hasBreak = true
+		}
+	}
+	if !hasSweepBear {
+		t.Error("expected at least one sweep_bear event")
+	}
+	if !hasBreak {
+		t.Error("expected at least one bos_bull or choch_bull event")
+	}
+	if data.LastTrend != "bullish" {
+		t.Errorf("expected LastTrend bullish after break, got %q", data.LastTrend)
+	}
+}
+
+// TestCalculateStructure_Disabled verifies that opts.Enabled=false returns nil.
+func TestCalculateStructure_Disabled(t *testing.T) {
+	klines := generateTestKlines(50)
+	opts := StructureOpts{Enabled: false, Lookback: 500}
+	data := CalculateStructure(klines, opts)
+	if data != nil {
+		t.Error("expected nil when Enabled=false")
+	}
+}
+
+// TestDetectPivots_EmptyAndShort verifies empty or too-short klines return nil.
+func TestDetectPivots_EmptyAndShort(t *testing.T) {
+	if highs, lows := detectPivots(nil, 1, 1); highs != nil || lows != nil {
+		t.Error("nil klines should return nil, nil")
+	}
+	if highs, lows := detectPivots([]Kline{{High: 1, Low: 0}}, 1, 1); highs != nil || lows != nil {
+		t.Error("single bar should return nil (need 3 for depth 1)")
+	}
+	klines2 := []Kline{{High: 1, Low: 0}, {High: 2, Low: 1}}
+	if highs, lows := detectPivots(klines2, 1, 1); highs != nil || lows != nil {
+		t.Error("two bars should return nil for depth 1")
+	}
+}
+
+// TestDetectPivots_Depth2 verifies pivot detection with leftBars=2, rightBars=2.
+func TestDetectPivots_Depth2(t *testing.T) {
+	// Need at least 5 bars. Bar 2 is local max if high[0,1,2,3,4] has max at 2.
+	klines := []Kline{
+		{High: 101, Low: 100},
+		{High: 102, Low: 101},
+		{High: 105, Low: 102}, // swing high at bar 2 (need 2 left, 2 right)
+		{High: 103, Low: 101},
+		{High: 104, Low: 100},
+	}
+	highs, _ := detectPivots(klines, 2, 2)
+	if len(highs) != 1 {
+		t.Fatalf("expected 1 swing high with depth 2, got %d", len(highs))
+	}
+	if highs[0].BarIndex != 2 || highs[0].Price != 105 {
+		t.Errorf("swing high: want BarIndex=2 Price=105, got BarIndex=%d Price=%.2f", highs[0].BarIndex, highs[0].Price)
+	}
+}
+
+// TestDetectPivots_MultiplePivots verifies multiple swing highs in one series.
+func TestDetectPivots_MultiplePivots(t *testing.T) {
+	klines := []Kline{
+		{High: 98, Low: 97},
+		{High: 100, Low: 98}, // swing high 100
+		{High: 99, Low: 97},
+		{High: 99, Low: 96},
+		{High: 101, Low: 99}, // swing high 101
+		{High: 100, Low: 98},
+	}
+	highs, _ := detectPivots(klines, 1, 1)
+	if len(highs) != 2 {
+		t.Fatalf("expected 2 swing highs, got %d", len(highs))
+	}
+	if highs[0].Price != 100 || highs[0].BarIndex != 1 {
+		t.Errorf("first swing high: want 100 @ 1, got %.2f @ %d", highs[0].Price, highs[0].BarIndex)
+	}
+	if highs[1].Price != 101 || highs[1].BarIndex != 4 {
+		t.Errorf("second swing high: want 101 @ 4, got %.2f @ %d", highs[1].Price, highs[1].BarIndex)
+	}
+}
+
+// TestCalculateStructure_TooFewKlines verifies that fewer than 3 klines returns nil.
+func TestCalculateStructure_TooFewKlines(t *testing.T) {
+	opts := StructureOpts{Enabled: true, Depth: 1, Lookback: 500}
+	if data := CalculateStructure(nil, opts); data != nil {
+		t.Error("nil klines should return nil")
+	}
+	if data := CalculateStructure([]Kline{}, opts); data != nil {
+		t.Error("empty klines should return nil")
+	}
+	if data := CalculateStructure([]Kline{{High: 1, Low: 0}, {High: 2, Low: 1}}, opts); data != nil {
+		t.Error("2 klines should return nil")
+	}
+}
+
+// TestCalculateStructure_ChochBear verifies bearish ChoCH (break below swing low after uptrend).
+func TestCalculateStructure_ChochBear(t *testing.T) {
+	// Bar 2 = swing high 105. Bar 5 close 106 > 105 → bos_bull. Only one swing low at bar 6 = 98 (bars 3,4 have higher lows so no extra pivots). Bar 8 close < 98 → choch_bear.
+	klines := []Kline{
+		{OpenTime: 0, High: 100, Low: 99, Close: 99.5},
+		{OpenTime: 1, High: 102, Low: 99, Close: 101},
+		{OpenTime: 2, High: 105, Low: 101, Close: 104}, // swing high 105 at bar 2
+		{OpenTime: 3, High: 104, Low: 103, Close: 103},
+		{OpenTime: 4, High: 104, Low: 103, Close: 103},
+		{OpenTime: 5, High: 106, Low: 104, Close: 106}, // close > 105 → bos_bull
+		{OpenTime: 6, High: 104, Low: 98, Close: 100},  // swing low 98 at bar 6 (103, 98, 99)
+		{OpenTime: 7, High: 100, Low: 99, Close: 99},
+		{OpenTime: 8, High: 99, Low: 97, Close: 97},    // close < 98 → choch_bear
+	}
+	opts := StructureOpts{Enabled: true, Depth: 1, Lookback: 100, MaxEvents: 20}
+	data := CalculateStructure(klines, opts)
+	if data == nil {
+		t.Fatal("CalculateStructure returned nil")
+	}
+	var hasChochBear bool
+	for _, ev := range data.Events {
+		if ev.Type == "choch_bear" {
+			hasChochBear = true
+			break
+		}
+	}
+	if !hasChochBear {
+		t.Error("expected choch_bear event after break below swing low in uptrend")
+	}
+	if data.LastTrend != "bearish" {
+		t.Errorf("expected LastTrend bearish, got %q", data.LastTrend)
+	}
+}
+
+// TestCalculateStructure_SweepBull verifies bullish sweep (wick below swing low, close above).
+func TestCalculateStructure_SweepBull(t *testing.T) {
+	klines := []Kline{
+		{OpenTime: 0, High: 102, Low: 100, Close: 101},
+		{OpenTime: 1, High: 103, Low: 99, Close: 102},
+		{OpenTime: 2, High: 101, Low: 97, Close: 99},  // swing low 97 at bar 2
+		{OpenTime: 3, High: 99, Low: 98, Close: 98.5},
+		{OpenTime: 4, High: 99, Low: 96, Close: 98}, // low < 97, close > 97 → sweep_bull
+	}
+	opts := StructureOpts{Enabled: true, Depth: 1, Lookback: 100, MaxEvents: 20}
+	data := CalculateStructure(klines, opts)
+	if data == nil {
+		t.Fatal("CalculateStructure returned nil")
+	}
+	var hasSweepBull bool
+	for _, ev := range data.Events {
+		if ev.Type == "sweep_bull" {
+			hasSweepBull = true
+			if ev.Level != 97 {
+				t.Errorf("sweep_bull level want 97, got %.2f", ev.Level)
+			}
+			break
+		}
+	}
+	if !hasSweepBull {
+		t.Error("expected sweep_bull event")
+	}
+}
+
+// TestCalculateStructure_MaxEventsCapped verifies that only last MaxEvents events are kept.
+func TestCalculateStructure_MaxEventsCapped(t *testing.T) {
+	// Create many swing points and breaks so we get more than MaxEvents.
+	klines := make([]Kline, 0, 50)
+	for i := 0; i < 50; i++ {
+		var high, low, close float64
+		if i%4 == 1 {
+			high = 100 + float64(i)
+			low = 99 + float64(i)
+			close = 99.5 + float64(i)
+		} else if i%4 == 3 {
+			high = 101 + float64(i)
+			low = 98 + float64(i)
+			close = 100 + float64(i) // break above previous high
+		} else {
+			high = 99 + float64(i)
+			low = 98 + float64(i)
+			close = 98.5 + float64(i)
+		}
+		klines = append(klines, Kline{OpenTime: int64(i), High: high, Low: low, Close: close})
+	}
+	opts := StructureOpts{Enabled: true, Depth: 1, Lookback: 500, MaxEvents: 5}
+	data := CalculateStructure(klines, opts)
+	if data == nil {
+		t.Fatal("CalculateStructure returned nil")
+	}
+	if len(data.Events) > 5 {
+		t.Errorf("expected at most 5 events, got %d", len(data.Events))
+	}
+}
+
+// TestCalculateStructure_Depth2 uses depth 2 (fewer pivots).
+func TestCalculateStructure_Depth2(t *testing.T) {
+	// With depth 2 we need 2 bars on each side; so first pivot possible at bar 2, need 5 bars min.
+	klines := []Kline{
+		{OpenTime: 0, High: 100, Low: 99, Close: 99.5},
+		{OpenTime: 1, High: 101, Low: 99, Close: 100},
+		{OpenTime: 2, High: 105, Low: 101, Close: 103}, // swing high 105 (depth 2)
+		{OpenTime: 3, High: 103, Low: 102, Close: 102.5},
+		{OpenTime: 4, High: 104, Low: 102, Close: 103},
+		{OpenTime: 5, High: 106, Low: 103, Close: 106}, // close > 105 → break
+	}
+	opts := StructureOpts{Enabled: true, Depth: 2, Lookback: 100, MaxEvents: 10}
+	data := CalculateStructure(klines, opts)
+	if data == nil {
+		t.Fatal("CalculateStructure returned nil")
+	}
+	// Should have at least one break (close > swing high 105)
+	var hasBreak bool
+	for _, ev := range data.Events {
+		if ev.Type == "bos_bull" || ev.Type == "choch_bull" {
+			hasBreak = true
+			break
+		}
+	}
+	if !hasBreak {
+		t.Error("expected break event with depth 2")
+	}
+}
+
+// TestCalculateStructure_DefaultLookbackMaxEvents verifies zero lookback/maxEvents use defaults.
+func TestCalculateStructure_DefaultLookbackMaxEvents(t *testing.T) {
+	klines := []Kline{
+		{OpenTime: 0, High: 99, Low: 98, Close: 98.5},
+		{OpenTime: 1, High: 100, Low: 98, Close: 99},
+		{OpenTime: 2, High: 101, Low: 99, Close: 100},
+		{OpenTime: 3, High: 102, Low: 100, Close: 102}, // break above 101
+	}
+	opts := StructureOpts{Enabled: true, Depth: 1, Lookback: 0, MaxEvents: 0}
+	data := CalculateStructure(klines, opts)
+	if data == nil {
+		t.Fatal("CalculateStructure returned nil with default opts")
+	}
+	// Should not panic and should return valid structure (lookback 500, maxEvents 15 applied internally)
+	if len(data.Events) > 15 {
+		t.Errorf("events should be capped at default 15, got %d", len(data.Events))
+	}
+}

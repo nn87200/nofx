@@ -140,9 +140,14 @@ type IndicatorConfig struct {
 	EnableRSI         bool `json:"enable_rsi"`
 	EnableATR         bool `json:"enable_atr"`
 	EnableBOLL        bool `json:"enable_boll"`         // Bollinger Bands
+	EnableStructure   bool `json:"enable_structure"`    // Structure (MSB, BOS, ChoCH, Sweeps)
 	EnableVolume      bool `json:"enable_volume"`
 	EnableOI          bool `json:"enable_oi"`           // open interest
 	EnableFundingRate bool `json:"enable_funding_rate"` // funding rate
+	// Structure indicator options (when EnableStructure is true)
+	StructureDepth     int `json:"structure_depth,omitempty"`     // 1 = short, 2 = intermediate, 3 = long term
+	StructureLookback  int `json:"structure_lookback,omitempty"`  // bars to fetch for structure (e.g. 500)
+	StructureMaxEvents int `json:"structure_max_events,omitempty"`  // max events to keep (e.g. 15)
 	// EMA period configuration
 	EMAPeriods []int `json:"ema_periods,omitempty"` // default [20, 50]
 	// RSI period configuration
@@ -281,6 +286,10 @@ func GetDefaultStrategyConfig(lang string) StrategyConfig {
 			EnableRSI:         false,
 			EnableATR:         false,
 			EnableBOLL:        false,
+			EnableStructure:   false,
+			StructureDepth:    1,
+			StructureLookback: 500,
+			StructureMaxEvents: 15,
 			EnableVolume:      true,
 			EnableOI:          true,
 			EnableFundingRate: true,

@@ -302,8 +302,10 @@ func GetWithExchange(symbol, exchange string) (*Data, error) {
 	}, nil
 }
 
-// GetWithTimeframes retrieves market data for specified multiple timeframes.
-// count is the number of K-lines per timeframe; at least 200 are fetched from the API.
+// GetWithTimeframes retrieves market data for specified multiple timeframes
+// timeframes: list of timeframes, e.g. ["5m", "15m", "1h", "4h"]
+// primaryTimeframe: primary timeframe (used for calculating current indicators), defaults to timeframes[0]
+// count: number of K-lines for each timeframe
 func GetWithTimeframes(symbol string, timeframes []string, primaryTimeframe string, count int) (*Data, error) {
 	symbol = Normalize(symbol)
 
@@ -332,17 +334,28 @@ func GetWithTimeframes(symbol string, timeframes []string, primaryTimeframe stri
 	timeframeData := make(map[string]*TimeframeSeriesData)
 	var primaryKlines []Kline
 
-	fetchLimit := count
-	if fetchLimit < 200 {
-		fetchLimit = 200
-	}
+	// Check if this is an xyz dex asset (use Hyperliquid API)
+	isXyzAsset := IsXyzDexAsset(symbol)
 
 	// Get K-line data for each timeframe
 	for _, tf := range timeframes {
-		klines, err := getKlinesForTimeframe(symbol, tf, fetchLimit)
-		if err != nil {
-			logger.Infof("⚠️ Failed to get %s %s K-line: %v", symbol, tf, err)
-			continue
+		var klines []Kline
+		var err error
+
+		if isXyzAsset {
+			// Use Hyperliquid API for xyz dex assets
+			klines, err = getKlinesFromHyperliquid(symbol, tf, 200)
+			if err != nil {
+				logger.Infof("⚠️ Failed to get %s %s K-line from Hyperliquid: %v", symbol, tf, err)
+				continue
+			}
+		} else {
+			// Use CoinAnk for regular crypto assets (default to Binance)
+			klines, err = getKlinesFromCoinAnk(symbol, tf, "binance", 200)
+			if err != nil {
+				logger.Infof("⚠️ Failed to get %s %s K-line from CoinAnk: %v", symbol, tf, err)
+				continue
+			}
 		}
 
 		if len(klines) == 0 {
@@ -355,7 +368,7 @@ func GetWithTimeframes(symbol string, timeframes []string, primaryTimeframe stri
 			primaryKlines = klines
 		}
 
-		// Calculate series data for this timeframe (last count bars only)
+		// Calculate series data for this timeframe (use count from config)
 		seriesData := calculateTimeframeSeries(klines, tf, count)
 		timeframeData[tf] = seriesData
 	}

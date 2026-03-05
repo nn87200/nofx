@@ -337,6 +337,12 @@ func GetWithTimeframes(symbol string, timeframes []string, primaryTimeframe stri
 	// Check if this is an xyz dex asset (use Hyperliquid API)
 	isXyzAsset := IsXyzDexAsset(symbol)
 
+	// Fetch at least 200 bars so indicators have enough history; allow more when config requests it
+	fetchLimit := count
+	if fetchLimit < 200 {
+		fetchLimit = 200
+	}
+
 	// Get K-line data for each timeframe
 	for _, tf := range timeframes {
 		var klines []Kline
@@ -344,14 +350,14 @@ func GetWithTimeframes(symbol string, timeframes []string, primaryTimeframe stri
 
 		if isXyzAsset {
 			// Use Hyperliquid API for xyz dex assets
-			klines, err = getKlinesFromHyperliquid(symbol, tf, 200)
+			klines, err = getKlinesFromHyperliquid(symbol, tf, fetchLimit)
 			if err != nil {
 				logger.Infof("⚠️ Failed to get %s %s K-line from Hyperliquid: %v", symbol, tf, err)
 				continue
 			}
 		} else {
 			// Use CoinAnk for regular crypto assets (default to Binance)
-			klines, err = getKlinesFromCoinAnk(symbol, tf, "binance", 200)
+			klines, err = getKlinesFromCoinAnk(symbol, tf, "binance", fetchLimit)
 			if err != nil {
 				logger.Infof("⚠️ Failed to get %s %s K-line from CoinAnk: %v", symbol, tf, err)
 				continue
@@ -417,9 +423,9 @@ func GetWithTimeframes(symbol string, timeframes []string, primaryTimeframe stri
 	}, nil
 }
 
-// EnrichWithStructure does a separate kline fetch per timeframe (structureOpts.Lookback bars),
+// EnrichWithStructure does a separate kline fetch per timeframe (structureOpts.Lookback bars, default 500),
 // computes Structure and attaches it to data.TimeframeData[tf].Structure. Call after GetWithTimeframes
-// when the structure indicator is enabled; keeps the main fetch count unchanged.
+// when the structure indicator is enabled; indicators use the configured K-line count, structure uses its own configurable count.
 func EnrichWithStructure(data *Data, structureOpts StructureOpts) {
 	if data == nil || !structureOpts.Enabled {
 		return

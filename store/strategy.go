@@ -287,7 +287,7 @@ func GetDefaultStrategyConfig(lang string) StrategyConfig {
 			EnableATR:         false,
 			EnableBOLL:        false,
 			EnableStructure:   false,
-			StructureDepth:    1,
+			StructureDepth:    3, // 1 = short only, 2 = + intermediate, 3 = all (short + intermediate + long)
 			StructureLookback: 500,
 			StructureMaxEvents: 15,
 			EnableVolume:      true,

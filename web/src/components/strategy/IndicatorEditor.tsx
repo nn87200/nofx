@@ -74,6 +74,10 @@ export function IndicatorEditor({
       bollDesc: { zh: '布林带指标（上中下轨）', en: 'Upper/Middle/Lower Bands' },
       structure: { zh: '结构', en: 'Structure' },
       structureDesc: { zh: 'MSB/BOS/ChoCH/流动性扫单', en: 'MSB, BOS, ChoCH, liquidity sweeps' },
+      structureDepth: { zh: '层级', en: 'Depth' },
+      structureDepth1: { zh: '1 = 短期', en: '1 = Short only' },
+      structureDepth2: { zh: '2 = 短期+中期', en: '2 = Short + Intermediate' },
+      structureDepth3: { zh: '3 = 全部', en: '3 = All (Short + Int + Long)' },
       volume: { zh: '成交量', en: 'Volume' },
       volumeDesc: { zh: '交易量分析', en: 'Trading volume analysis' },
       oi: { zh: '持仓量', en: 'Open Interest' },
@@ -675,7 +679,7 @@ export function IndicatorEditor({
               { key: 'enable_rsi', label: 'rsi', desc: 'rsiDesc', color: '#F6465D', periodKey: 'rsi_periods', defaultPeriods: '7,14' },
               { key: 'enable_atr', label: 'atr', desc: 'atrDesc', color: '#60a5fa', periodKey: 'atr_periods', defaultPeriods: '14' },
               { key: 'enable_boll', label: 'boll', desc: 'bollDesc', color: '#ec4899', periodKey: 'boll_periods', defaultPeriods: '20' },
-              { key: 'enable_structure', label: 'structure', desc: 'structureDesc', color: '#22d3ee', periodKey: undefined, defaultPeriods: '' },
+              { key: 'enable_structure', label: 'structure', desc: 'structureDesc', color: '#22d3ee', periodKey: 'structure_lookback', defaultPeriods: '500' },
             ].map(({ key, label, desc, color, periodKey, defaultPeriods }) => (
               <div
                 key={key}
@@ -700,22 +704,59 @@ export function IndicatorEditor({
                 </div>
                 <p className="text-[10px] mb-1.5" style={{ color: '#5E6673' }}>{t(desc)}</p>
                 {periodKey && config[key as keyof IndicatorConfig] && (
-                  <input
-                    type="text"
-                    value={(config[periodKey as keyof IndicatorConfig] as number[])?.join(',') || defaultPeriods}
-                    onChange={(e) => {
-                      if (disabled) return
-                      const periods = e.target.value
-                        .split(',')
-                        .map((s) => parseInt(s.trim()))
-                        .filter((n) => !isNaN(n) && n > 0)
-                      onChange({ ...config, [periodKey]: periods })
-                    }}
-                    disabled={disabled}
-                    placeholder={defaultPeriods}
-                    className="w-full px-2 py-1 rounded text-[10px] text-center"
-                    style={{ background: '#1E2329', border: '1px solid #2B3139', color: '#EAECEF' }}
-                  />
+                  periodKey === 'structure_lookback' ? (
+                    <>
+                      <input
+                        type="number"
+                        value={config.structure_lookback ?? 500}
+                        onChange={(e) => {
+                          if (disabled) return
+                          const v = parseInt(e.target.value, 10)
+                          onChange({ ...config, structure_lookback: !isNaN(v) && v > 0 ? v : 500 })
+                        }}
+                        disabled={disabled}
+                        min={100}
+                        max={2000}
+                        className="w-full px-2 py-1 rounded text-[10px] text-center"
+                        style={{ background: '#1E2329', border: '1px solid #2B3139', color: '#EAECEF' }}
+                      />
+                      <div className="flex items-center gap-2 mt-1.5">
+                        <span className="text-[10px] flex-shrink-0" style={{ color: '#848E9C' }}>{t('structureDepth')}:</span>
+                        <select
+                          value={Math.min(3, Math.max(1, config.structure_depth ?? 1))}
+                          onChange={(e) => {
+                            if (disabled) return
+                            const v = parseInt(e.target.value, 10)
+                            onChange({ ...config, structure_depth: !isNaN(v) && v >= 1 && v <= 3 ? v : 1 })
+                          }}
+                          disabled={disabled}
+                          className="flex-1 px-2 py-1 rounded text-[10px]"
+                          style={{ background: '#1E2329', border: '1px solid #2B3139', color: '#EAECEF' }}
+                        >
+                          <option value={1}>{t('structureDepth1')}</option>
+                          <option value={2}>{t('structureDepth2')}</option>
+                          <option value={3}>{t('structureDepth3')}</option>
+                        </select>
+                      </div>
+                    </>
+                  ) : (
+                    <input
+                      type="text"
+                      value={(config[periodKey as keyof IndicatorConfig] as number[])?.join(',') || defaultPeriods}
+                      onChange={(e) => {
+                        if (disabled) return
+                        const periods = e.target.value
+                          .split(',')
+                          .map((s) => parseInt(s.trim()))
+                          .filter((n) => !isNaN(n) && n > 0)
+                        onChange({ ...config, [periodKey]: periods })
+                      }}
+                      disabled={disabled}
+                      placeholder={defaultPeriods}
+                      className="w-full px-2 py-1 rounded text-[10px] text-center"
+                      style={{ background: '#1E2329', border: '1px solid #2B3139', color: '#EAECEF' }}
+                    />
+                  )
                 )}
               </div>
             ))}

@@ -935,9 +935,9 @@ export function StrategyStudioPage() {
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <button
                       onClick={() => {
-                        if (!selectedStrategy?.is_default) {
-                          updateConfig('strategy_type', 'ai_trading')
-                          updateConfig('grid_config', undefined)
+                        if (!selectedStrategy?.is_default && editingConfig) {
+                          setEditingConfig({ ...editingConfig, strategy_type: 'ai_trading', grid_config: undefined })
+                          setHasChanges(true)
                         }
                       }}
                       disabled={selectedStrategy?.is_default}
@@ -955,9 +955,9 @@ export function StrategyStudioPage() {
                     </button>
                     <button
                       onClick={() => {
-                        if (!selectedStrategy?.is_default) {
-                          updateConfig('strategy_type', 'multi_turn_ai_trading')
-                          updateConfig('grid_config', undefined)
+                        if (!selectedStrategy?.is_default && editingConfig) {
+                          setEditingConfig({ ...editingConfig, strategy_type: 'multi_turn_ai_trading', grid_config: undefined })
+                          setHasChanges(true)
                         }
                       }}
                       disabled={selectedStrategy?.is_default}
@@ -975,12 +975,13 @@ export function StrategyStudioPage() {
                     </button>
                     <button
                       onClick={() => {
-                        if (!selectedStrategy?.is_default) {
-                          updateConfig('strategy_type', 'grid_trading')
-                          // Initialize grid config if not exists
-                          if (!editingConfig.grid_config) {
-                            updateConfig('grid_config', defaultGridConfig)
-                          }
+                        if (!selectedStrategy?.is_default && editingConfig) {
+                          setEditingConfig({
+                            ...editingConfig,
+                            strategy_type: 'grid_trading',
+                            grid_config: editingConfig.grid_config ?? defaultGridConfig,
+                          })
+                          setHasChanges(true)
                         }
                       }}
                       disabled={selectedStrategy?.is_default}
